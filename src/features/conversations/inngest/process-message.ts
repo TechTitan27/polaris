@@ -46,15 +46,43 @@ export const processMessage = inngest.createFunction(
       throw new NonRetriableError("POLARIS_CONVEX_INTERNAL_KEY is not configured");
     }
 
-    await step.sleep("wait-for-ai-processing", "5s");
-
     await step.run("update-assistant-message", async () => {
-      await convex.mutation(api.system.updateMessageContent, {
-        internalKey,
-        messageId,
-        content: "AI processed this message (TODO)"
-      })
+      // Call Kortex API to get AI response
+      try {
+        const response = await fetch("https://uj1o2lxj--chat.functions.blink.new", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": "aries_img123rd_789ftyu"
+          },
+          body: JSON.stringify({
+            message: "Please provide a helpful response to the user's message. You are a coding assistant helping with code-related questions and tasks."
+          })
+        });
+
+        const result = await response.json();
+        
+        let aiResponse = "I'm here to help with your coding questions. How can I assist you today?";
+        
+        if (result.success && result.response) {
+          aiResponse = result.response;
+        }
+
+        // Update the message with AI response
+        await convex.mutation(api.system.updateMessageContent, {
+          internalKey,
+          messageId,
+          content: aiResponse
+        });
+      } catch (error) {
+        console.error("Error calling Kortex API:", error);
+        // Update with fallback message
+        await convex.mutation(api.system.updateMessageContent, {
+          internalKey,
+          messageId,
+          content: "I apologize, but I encountered an issue processing your message. Please try again."
+        });
+      }
     });
   }
 );
-

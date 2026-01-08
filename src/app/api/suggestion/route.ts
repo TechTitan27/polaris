@@ -1,9 +1,6 @@
-import { generateText, Output } from "ai";
-import { auth } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
 import { z } from "zod";
-import { anthropic } from "@ai-sdk/anthropic";
-// import { google } from "@ai-sdk/google";
+import { NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 
 const suggestionSchema = z.object({
   suggestion: z
@@ -82,15 +79,38 @@ export async function POST(request: Request) {
       .replace("{nextLines}", nextLines || "")
       .replace("{lineNumber}", lineNumber.toString());
 
-    const { output } = await generateText({
-      model: anthropic("claude-3-7-sonnet-20250219"),
-      output: Output.object({ schema: suggestionSchema }),
-      prompt,
+    // Call Kortex API
+    const response = await fetch("https://uj1o2lxj--chat.functions.blink.new", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": "aries_img123rd_789ftyu"
+      },
+      body: JSON.stringify({
+        message: `Please provide a code suggestion. ${prompt}\n\nReturn only the suggested code as JSON: { "suggestion": "your suggestion here" }`
+      })
     });
 
-    return NextResponse.json({ suggestion: output.suggestion })
+    const result = await response.json();
+    
+    if (result.success && result.response) {
+      // Parse the response to extract the suggestion
+      try {
+        const parsed = suggestionSchema.parse(JSON.parse(result.response));
+        return NextResponse.json({ suggestion: parsed.suggestion });
+      } catch (parseError) {
+        // If parsing fails, return the raw response as suggestion
+        return NextResponse.json({ suggestion: result.response });
+      }
+    } else {
+      console.error("Kortex API error:", result.error);
+      return NextResponse.json(
+        { error: "Failed to generate suggestion" },
+        { status: 500 }
+      );
+    }
   } catch (error) {
-    console.error("Suggestion error: ", error);
+    console.error("Suggestion error:", error);
     return NextResponse.json(
       { error: "Failed to generate suggestion" },
       { status: 500 },

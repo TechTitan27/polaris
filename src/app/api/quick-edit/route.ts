@@ -1,10 +1,6 @@
 import { z } from "zod";
-import { generateText, Output } from "ai";
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { anthropic } from "@ai-sdk/anthropic";
-
-import { firecrawl } from "@/lib/firecrawl";
 
 const quickEditSchema = z.object({
   editedCode: z
@@ -14,7 +10,7 @@ const quickEditSchema = z.object({
     ),
 });
 
-const URL_REGEX = /https?:\/\/[^\s)>\]]+/g;
+const URL_REGEX = /https?:\/\/[^\s>)\]]+/g;
 
 const QUICK_EDIT_PROMPT = `You are a code editing assistant. Edit the selected code based on the user's instruction.
 
@@ -38,6 +34,7 @@ Return ONLY the edited version of the selected code.
 Maintain the same indentation level as the original.
 Do not include any explanations or comments unless requested.
 If the instruction is unclear or cannot be applied, return the original code unchanged.
+Return the result as JSON: { "editedCode": "your edited code here" }
 </instructions>`;
 
 export async function POST(request: Request) {
@@ -69,30 +66,9 @@ export async function POST(request: Request) {
     const urls: string[] = instruction.match(URL_REGEX) || [];
     let documentationContext = "";
 
+    // Note: Firecrawl integration removed - will need to be implemented separately if needed
     if (urls.length > 0) {
-      const scrapedResults = await Promise.all(
-        urls.map(async (url) => {
-          try {
-            const result = await firecrawl.scrape(url, {
-              formats: ["markdown"],
-            });
-
-            if (result.markdown) {
-              return `<doc url="${url}">\n${result.markdown}\n</doc>`;
-            }
-
-            return null;
-          } catch {
-            return null;
-          }
-        })
-      );
-
-      const validResults = scrapedResults.filter(Boolean);
-
-      if (validResults.length > 0) {
-        documentationContext = `<documentation>\n${validResults.join("\n\n")}\n</documentation>`;
-      }
+      documentationContext = `\n\nDocumentation URLs referenced: ${urls.join(", ")}`;
     }
 
     const prompt = QUICK_EDIT_PROMPT
@@ -101,13 +77,39 @@ export async function POST(request: Request) {
       .replace("{instruction}", instruction)
       .replace("{documentation}", documentationContext);
 
-    const { output } = await generateText({
-      model: anthropic("claude-3-7-sonnet-20250219"),
-      output: Output.object({ schema: quickEditSchema }),
-      prompt,
+    // Call Kortex API
+    const response = await fetch("https://uj1o2lxj--chat.functions.blink.new", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": "aries_img123rd_789ftyu"
+      },
+      body: JSON.stringify({
+        message: prompt
+      })
     });
 
-    return NextResponse.json({ editedCode: output.editedCode });
+    const result = await response.json();
+    
+    if (result.success && result.response) {
+      try {
+        const parsed = quickEditSchema.parse(JSON.parse(result.response));
+        return NextResponse.json({ editedCode: parsed.editedCode });
+      } catch (parseError) {
+        // If parsing fails, try to extract edited code from the response
+        const editedCodeMatch = result.response.match(/"editedCode"\s*:\s*"([^"]+)"/);
+        if (editedCodeMatch) {
+          return NextResponse.json({ editedCode: editedCodeMatch[1] });
+        }
+        return NextResponse.json({ editedCode: result.response });
+      }
+    } else {
+      console.error("Edit error:", result.error);
+      return NextResponse.json(
+        { error: "Failed to generate edit" },
+        { status: 500 }
+      );
+    }
   } catch (error) {
     console.error("Edit error:", error);
     return NextResponse.json(
@@ -115,4 +117,4 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
-};
+}
